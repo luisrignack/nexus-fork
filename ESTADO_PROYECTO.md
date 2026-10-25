@@ -1,7 +1,7 @@
 # Estado del proyecto — Fork de Nexus Repository
 
 > Documento vivo. Actualizar al final de cada sesión de trabajo.
-> Última actualización: 2026-10-24
+> Última actualización: 2026-10-25
 
 ## 1. Objetivo
 
@@ -742,4 +742,54 @@ reales y documentarlos en `docs/` como se hizo con npm/Yum/PyPI.
 - **Repo raíz del workspace:** `/home/ladmin/Downloads/nexus-fork` pasa a ser un repositorio git
   propio con la documentación del proyecto, registrando `nexus-public` como **submódulo** apuntando
   a `git@github.com:luisrignack/nexus-public.git`.
+
+## 2026-10-25 - Ansible: la assembly llevaba el jar vacío + 3 bugs corregidos y E2E en verde
+
+**Diagnóstico inicial (el formato estaba "verde" solo en unit tests):**
+
+- El jar de `nexus-repository-ansible` empaquetado en la assembly tenía **0 clases** (2.328 bytes):
+  el build de scaffold (`build-scaffold.log`) lo compiló con *"No sources to compile"* →
+  `JAR will be empty - no content was marked for inclusion`. Ese jar vacío fue el que se instaló en
+  `~/.m2` y viajó dentro del fat jar (`BOOT-INF/lib/`).
+- Consecuencia: el Nexus en marcha devolvía **404** en `GET /service/rest/v1/repositories/ansible/hosted`
+  y no había ninguna receta `ansible`. `docs/FORMATOS.md` lo marcaba ✅ antes de tiempo.
+
+**Reconstrucción:**
+
+- `mvn -o -B install -Ppublic -DskipTests -Dmaven.javadoc.skip=true -pl '!.../nexus-repository-cocoapods'`
+  (~2:30 min). **Ojo:** `nexus-repository-cocoapods` está a medias y rompe el reactor con
+  `package org.sonatype.nexus.content.cocoapods.internal.store does not exist`; hay que excluirlo
+  hasta que su autor termine (su jar vacío en `~/.m2` tapa la dependencia de la assembly).
+- Fat jar con `BOOT-INF/lib/nexus-repository-ansible-3.89.0-09.jar` de **82 KB / 50 clases**;
+  Nexus reiniciado con `setsid nohup ./bin/nexus run` (si se lanza sin `setsid` el proceso muere al
+  terminar el comando del harness). Al arrancar se crean las 5 tablas `Ansible*DAO`.
+
+**3 bugs reales encontrados por el E2E y corregidos (todo dentro del módulo):**
+
+1. **`AnsibleGroupHandler`: descarga del group siempre 404.** El caso `DOWNLOAD` hacía
+   `collect()` (que despacha a todos los miembros y los marca como ya despachados) y después
+   `firstSuccessful()` → `getFirst()` los saltaba a todos y devolvía `notFound`. Ahora `DOWNLOAD`
+   llama directamente a `firstSuccessful()`.
+2. **`GET /` solo redirigía en el proxy.** `AnsibleRedirectHandler` solo estaba cableado en
+   `AnsibleProxyRecipe`; hosted y group devolvían 200. Añadida la ruta raíz
+   (`GET|HEAD` + `TokenMatcher("/")`) en `AnsibleHostedRecipe` y `AnsibleGroupRecipe` → **302
+   `api/v3/`** en los tres tipos, como promete la doc.
+3. **El proxy corrompía los tarballs.** `AnsibleProxyFacet.isJson()` usaba `parse(path).isApi()`,
+   que es `true` también para `Kind.DOWNLOAD`: el binario se leía como UTF-8, se reescribía como
+   texto (bytes U+FFFD) y se servía como `application/json`. Nuevo `GalaxyRequest.isDocument()`
+   (excluye `DOWNLOAD` y `ASSET`) usado en `isJson()` y en `getCacheController()` (los downloads
+   pasan al caché de contenido), y el `Accept` de la petición upstream es `application/json` solo
+   para documentos. Test nuevo `onlyDocumentsAreRewrittenAsJson`.
+
+**Validación E2E completa** (`/tmp/opencode/e2e_ansible.sh`, fixtures `/tmp/opencode/*.tar.gz`,
+upstream Galaxy falso `/tmp/opencode/fake_galaxy.py` en `127.0.0.1:8099`): recetas
+`['group','hosted','proxy']`; creación 201/201/201; `GET /` 302 en los tres; PUT 201 por las dos
+rutas; 400 en las tres validaciones de subida; índice/detalle/versiones v3 correctos
+(`artifact.sha256`, `manifest`, `dependencies`); descarga gzip OK y 404 para versión inexistente;
+Galaxy v2 200; group con URLs reescritas y descarga OK; proxy con URLs reescritas y **tarball
+íntegro**; DELETE 204 y 404.
+
+- **Tests del módulo: 24 en verde** (23 previos + 1 nuevo).
+- **Pendiente:** repetir el proxy contra un Galaxy real accesible (`galaxy.ansible.com` devuelve
+  403 desde este entorno) y verificar la UI (ExtJS/React) contra la assembly ya desplegada.
 
