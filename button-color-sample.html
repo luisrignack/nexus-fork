@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Muestra - Botones verdes -> Azul oscuro</title>
+  <style>
+    :root {
+      --nexus-green: #3FB950;
+      --nexus-green-hover: #2DA44E;
+      --nexus-blue-dark: #1F6BFF;
+      --nexus-blue-dark-hover: #1A5BE0;
+      --nexus-blue-darker: #0F3DCC;
+      --bg: #0f1419;
+      --panel: #161b22;
+      --text: #e6edf3;
+      --text-secondary: #8b949e;
+      --border: #30363d;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    
+    header {
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    
+    h1 {
+      font-size: 1.8rem;
+      margin-bottom: 0.5rem;
+    }
+    
+    .subtitle {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+    }
+    
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    
+    .panel-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .button-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    
+    .btn {
+      padding: 5px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 20px;
+      border-radius: 6px;
+      border: 1px solid;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s ease-in-out;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    
+    /* Botones VERDES actuales (Nexus por defecto) */
+    .btn-green {
+      background-color: var(--nexus-green);
+      border-color: rgba(240, 246, 252, 0.1);
+      color: #ffffff;
+    }
+    
+    .btn-green:hover {
+      background-color: var(--nexus-green-hover);
+    }
+    
+    .btn-green:active {
+      background-color: #298e46;
+    }
+    
+    /* Botones AZULES OSCUROS propuestos */
+    .btn-blue-dark {
+      background-color: var(--nexus-blue-dark);
+      border-color: rgba(240, 246, 252, 0.1);
+      color: #ffffff;
+    }
+    
+    .btn-blue-dark:hover {
+      background-color: var(--nexus-blue-dark-hover);
+    }
+    
+    .btn-blue-dark:active {
+      background-color: var(--nexus-blue-darker);
+    }
+    
+    .label {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      background: rgba(139, 148, 158, 0.2);
+      border-radius: 4px;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      margin-bottom: 0.75rem;
+    }
+    
+    .label.current {
+      background: rgba(63, 185, 80, 0.15);
+      color: #3FB950;
+    }
+    
+    .label.proposed {
+      background: rgba(31, 107, 255, 0.15);
+      color: #1F6BFF;
+    }
+    
+    .comparison {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    
+    .comparison-item {
+      padding: 1rem;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    
+    .comparison-item h3 {
+      font-size: 0.9rem;
+      margin-bottom: 0.75rem;
+      color: var(--text-secondary);
+    }
+    
+    .note {
+      background: rgba(31, 107, 255, 0.1);
+      border: 1px solid rgba(31, 107, 255, 0.4);
+      border-radius: 6px;
+      padding: 1rem;
+      margin-top: 1.5rem;
+    }
+    
+    .note-title {
+      color: #1F6BFF;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+    
+    .note-text {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+    }
+    
+    code {
+      background: rgba(110, 118, 129, 0.4);
+      padding: 0.2rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.875rem;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🎨 Muestra de cambio de color - Botones verdes → Azul oscuro</h1>
+      <p class="subtitle">Vista previa antes de aplicar cambios en Nexus Repository</p>
+    </header>
+    
+    <div class="panel">
+      <div class="panel-title">
+        <span>Acciones primarias típicas en Nexus</span>
+      </div>
+      
+      <div class="comparison">
+        <div class="comparison-item">
+          <span class="label current">ACTUAL (Verde)</span>
+          <h3>Crear/Guardar/Confirmar</h3>
+          <div class="button-group">
+            <button class="btn btn-green">Crear repositorio</button>
+            <button class="btn btn-green">Guardar</button>
+            <button class="btn btn-green">Subir</button>
+          </div>
+          <div class="button-group">
+            <button class="btn btn-green">✓ Aplicar</button>
+            <button class="btn btn-green">+ Añadir</button>
+          </div>
+        </div>
+        
+        <div class="comparison-item">
+          <span class="label proposed">PROPUESTO (Azul oscuro)</span>
+          <h3>Crear/Guardar/Confirmar</h3>
+          <div class="button-group">
+            <button class="btn btn-blue-dark">Crear repositorio</button>
+            <button class="btn btn-blue-dark">Guardar</button>
+            <button class="btn btn-blue-dark">Subir</button>
+          </div>
+          <div class="button-group">
+            <button class="btn btn-blue-dark">✓ Aplicar</button>
+            <button class="btn btn-blue-dark">+ Añadir</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="panel">
+      <div class="panel-title">
+        <span>Otros tamaños y estados</span>
+      </div>
+      
+      <div class="comparison">
+        <div class="comparison-item">
+          <span class="label current">ACTUAL</span>
+          <div class="button-group">
+            <button class="btn btn-green">Pequeño</button>
+            <button class="btn btn-green">Tamaño normal</button>
+          </div>
+        </div>
+        
+        <div class="comparison-item">
+          <span class="label proposed">PROPUESTO</span>
+          <div class="button-group">
+            <button class="btn btn-blue-dark">Pequeño</button>
+            <button class="btn btn-blue-dark">Tamaño normal</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="note">
+      <div class="note-title">💡 Notas sobre esta propuesta</div>
+      <div class="note-text">
+        <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
+          <li>Se reemplazan únicamente los botones primarios/accionables que usan el color verde</li>
+          <li>Se mantiene la paleta oscura coherente con el tema actual de Nexus</li>
+          <li>El azul oscuro <code>#1F6BFF</code> es más sobrio y menos agresivo que el verde actual</li>
+          <li>Los estados hover/active también se ajustan para mantener la retroalimentación visual</li>
+          <li>Los botones de peligro, secundarios o neutros NO se modificarían</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

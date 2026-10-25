@@ -1,0 +1,15 @@
+.ssh/
+toolchain/
+gh-token
+.gh-token
+*.bak
+dep.bin
+
+# Nunca subir credenciales de la instancia local
+nexus-public/admin-creds.txt
+admin-creds.txt
+*.token
+
+# Artefactos de build/Node heredados de copias locales
+node_modules/
+target/
