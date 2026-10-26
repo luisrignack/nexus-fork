@@ -1,7 +1,9 @@
 # Estado del proyecto — Fork de Nexus Repository
 
 > Documento vivo. Actualizar al final de cada sesión de trabajo.
-> Última actualización: 2026-10-25
+> Última actualización: 2026-10-26
+>
+> Resultados consolidados de la batería de pruebas de formatos: [`PRUEBAS_FORMATOS.md`](PRUEBAS_FORMATOS.md).
 
 ## 1. Objetivo
 
@@ -47,9 +49,11 @@ Verificado en el árbol del repositorio (10.861 rutas, commit `0a8a425`):
 
 **Conclusión:** para igualar la edición completa hay que implementar como plugins, al menos:
 npm, Docker/OCI, PyPI, NuGet y Yum, además de soporte de PostgreSQL externo y features tipo Pro.
-**Estado del fork (2026-10-23): npm (hosted/proxy/group y extras), Yum (hosted/proxy), PyPI
-(hosted/proxy/group), Helm, Go, RubyGems y Docker/OCI (proxy pull-through) ya están implementados y
-desplegados en la assembly; PostgreSQL externo está soportado y verificado. NuGet sigue pendiente.**
+**Estado del fork (2026-10-26): npm (hosted/proxy/group y extras), Yum (hosted/proxy), PyPI
+(hosted/proxy/group), Helm, Go, RubyGems, Docker/OCI (proxy pull-through), NuGet
+(hosted/proxy/group), Cargo, Conan y Alpine están implementados, desplegados en la assembly y
+validados E2E; PostgreSQL externo está soportado y verificado. Los 15 formatos con receta pasan
+la batería de [`PRUEBAS_FORMATOS.md`](PRUEBAS_FORMATOS.md).**
 
 ## 4. Entorno y workspace
 
@@ -307,8 +311,9 @@ Estado del árbol: limpio tras el commit de F3 (`git status --short` sin cambios
   group funcionan de extremo a extremo.
 - **PostgreSQL:** soportado y verificado (driver empaquetado y configuración por entorno); ver
   5.7 y `docs/POSTGRESQL.md`. La migración H2→PostgreSQL no está automatizada.
-- **Docker Hub/GCR:** el proxy funciona, pero los blobs de esos dos mirrors están geobloqueados en
-  esta red (CloudFront/Google Storage → 403). GHCR y Quay funcionan completos; ver `docs/DOCKER.md`.
+- **Docker Hub/GCR:** no se usan por defecto. Los defaults son solo `ghcr` y `quay`, que funcionan
+  completos; las rutas de Docker Hub y `gcr` devuelven 404 rápido sin salida a red (Docker Hub está
+  bloqueado y el mirror `gcr` rechaza blobs). Ver `docs/DOCKER.md`.
 - **Pro/Pro+:** no se puede reutilizar código propietario; solo reimplementación limpia (5.4).
 - **Red inestable:** DNS intermitente y respuestas solo-IPv6 para algunos hosts.
   Usar `curl -4`, `NODE_OPTIONS=--dns-result-order=ipv4first` y reintentos.
@@ -432,7 +437,8 @@ mvn -o -B install -Ppublic -DskipTests -Dmaven.javadoc.skip=true   # regenera la
 7. ~~**Docker/OCI:** proxy pull-through con mirrors de Daocloud~~ **hecho** (5.8).
 8. **Pro:** ejecutar la lista priorizada de `docs/FUNCIONALIDADES_PRO.md`. ~~OIDC~~ **hecho**
    (entrada 2026-10-24); siguen UI del proxy Docker (hecha), GC de caché, SBOM y backup/restore.
-9. **NuGet:** único formato principal que falta para cubrir los de la edición completa.
+9. ~~**NuGet:** único formato principal que falta para cubrir los de la edición completa.~~
+   **hecho** (entrada 2026-10-26, junto con Cargo/Conan/PyPI/Docker).
 10. **UI:** verificar el formulario de repositorios con el bundle CoreUI regenerado y añadir la
     pantalla de administración del proxy Docker.
 11. Retomar `git fetch --deepen=500` cuando la red lo permita y subir los commits al fork
@@ -894,3 +900,81 @@ Cloudflare; verificar la UI ExtJS/React del formato contra la assembly.
 **Pendiente:** APK v3/ADB e índice firmado con clave de repositorio; verificar los formularios
 ExtJS en navegador (la REST API y las recetas ya están registradas).
 
+
+## 2026-10-26 - Formatos Cargo, Conan, NuGet y PyPI corregidos; Docker solo con mirrors verificados
+
+Se completó la batería de [`PRUEBAS_FORMATOS.md`](PRUEBAS_FORMATOS.md) sobre la assembly real.
+Los 15 formatos con receta quedan validados; los 4 módulos sin receta (CocoaPods, p2, Swift y Git
+LFS) siguen fuera del alcance.
+
+**Cargo** (`nexus-repository-cargo`):
+
+- `CargoCoordinatesHelper.storagePath()` convierte toda ruta relativa en absoluta antes de tocar
+  `assets().path(...)`; era la causa de los `500 Paths must start with a slash`.
+- `config.json` publica `api` como **raíz del repositorio** (Cargo construye
+  `<api>/api/v1/crates/...`) y `dl` como `<repo>/api/v1/crates`.
+- `CargoProxyFacet` enruta las descargas por el `dl` descubierto en el `config.json` del upstream
+  (`https://static.crates.io/crates`) y las peticiones de API por la base `api`, aceptando tanto
+  raíces como bases que ya incluyen `/api/v1/crates`.
+- El `.crate` se guarda ya con `Content-Type: application/gzip`; antes se envolvía el payload
+  cerrado y la respuesta fallaba.
+- E2E: `config.json`, índice `serde`, descargas de `serde/1.0.0` (58.433 B) y `anyhow/1.0.0`
+  (13.476 B) con SHA-256 igual al `cksum`, y segunda petición servida desde caché.
+
+**Conan** (`nexus-repository-conan`):
+
+- `ConanCoordinates.assetPath()` genera rutas absolutas; `assetsWithPrefix()` y las rutas relativas
+  del handler se ajustaron en consecuencia.
+- E2E hosted: `PUT`/`GET` de `conanfile.py`, `conaninfo.txt` y `libhello.a` (byte a byte),
+  revisiones de receta y paquete, ficheros y `download_urls` de ambos niveles.
+- El proxy no se pudo validar contra `center.conan.io` porque el upstream devuelve 403 desde esta
+  red (limitación externa).
+
+**NuGet** (`nexus-repository-nuget`):
+
+- Al guardar `index.json` se descubren y persisten como atributos del asset
+  `PackageBaseAddress/3.0.0`, `RegistrationsBaseUrl/3.6.0` y `SearchQueryService`.
+- Flat-container, registration y search se enrutan contra esas bases descubiertas; antes se
+  concatenaba `v3-flatcontainer` sobre `https://api.nuget.org/v3` y todo daba 404.
+- La variante de registration de la petición (`registration5-gz-semver2`, `registration5-semver1`)
+  se conserva al construir la URL del upstream.
+- Los atributos se recargan de forma perezosa: tras reiniciar, flat-container, search,
+  registration y `.nupkg` funcionan sin volver a pedir `index.json`.
+- E2E: `newtonsoft.json` 13.0.3 (`.nupkg` de 2.441.966 B, ZIP válido), registration `semver2` y
+  search.
+
+**PyPI** (`nexus-repository-pypi`):
+
+- `PyPiCoordinatesHelper.withRequestedSidecar()` añade los sufijos `.metadata`/`.asc` a la ruta
+  antes de resolverla; el sidecar se pide al upstream como archivo independiente.
+- E2E: `.whl.metadata` devuelve 1.795 B `text/plain` (SHA-256 `55070620…12872682`) y
+  `pip download six==1.16.0` completa sin desactivar PEP 658.
+
+**Docker** (`nexus-repository-docker`):
+
+- Defaults reducidos a los mirrors verificados: `ghcr` y `quay`
+  (`nexus.docker.defaultUpstream=ghcr`). `gcr` se retiró porque sirve manifiestos pero rechaza
+  blobs con 403.
+- Docker Hub no se configura por defecto. Un repositorio con `remoteUrl` de Docker Hub devuelve 404
+  con un aviso en el log en lugar de contactar `registry-1.docker.io`.
+- `DockerRegistryConfig.resolve()` rechaza los prefijos de registros conocidos pero no configurados
+  (`dockerhub`, `docker`, `docker.io`, `index.docker.io`, `registry-1.docker.io`, `library`,
+  `ghcr`, `quay`, `gcr`) en vez de enviarlos al upstream por defecto.
+- E2E: `docker pull localhost:8081/ghcr/astral-sh/uv:0.5.0` y
+  `docker pull localhost:8081/quay/prometheus/node-exporter:v1.8.0` completos (todos los blobs
+  200); `gcr`, `library/...`, `dockerhub/...`, `docker.io/...` y `qa-docker-proxy` devuelven 404 en
+  menos de 110 ms sin intentos de salida.
+- Tests: `DockerRegistryConfigTest` 12, `DockerRegistryServiceTest` 10, `DockerCacheTest` 8,
+  `DockerProxyFacetTest` 2 (32 en total).
+
+**Build y documentación:**
+
+- Módulos instalados con `mvn -o -q -pl <formatos> -DskipTests install`; la assembly se regeneró
+  borrando antes el uberjar (`nexus-repository-core-3.89.0-09.jar{,.original}`) para evitar reutilizar
+  el artefacto viejo. `nexus-repository-cocoapods` sigue rompiendo los builds con `-am`, por lo que
+  se compila aparte.
+- `PRUEBAS_FORMATOS.md` actualizado con los resultados finales, los hallazgos H1-H7 y la política de
+  Docker. `docs/DOCKER.md` refleja los nuevos defaults y el 404 de registros no configurados.
+
+**Pendiente:** ejecutar `cargo`, `conan` y `dotnet` reales cuando la red lo permita; APK v3/ADB e
+índice firmado; y subir los commits al fork.

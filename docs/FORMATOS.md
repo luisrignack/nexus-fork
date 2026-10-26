@@ -6,6 +6,8 @@ no se ha portado código de las ediciones comerciales de Sonatype.
 
 > Módulo Java: `nexus-public/public/common/components/formats/nexus-repository-<formato>`.
 > Recetas: `<formato>-hosted`, `<formato>-proxy`, `<formato>-group` (las que apliquen).
+>
+> Resultados consolidados de la última batería de pruebas: [`PRUEBAS_FORMATOS.md`](../PRUEBAS_FORMATOS.md).
 
 ## 1. Resumen
 
@@ -14,9 +16,9 @@ no se ha portado código de las ediciones comerciales de Sonatype.
 | `maven2`, `npm`, `pypi`, `raw`, `docker`, `apt`, `yum`, `go`, `helm`, `rubygems`, `r`, `conda`, `composer`, `huggingface`, `terraform` | hosted/proxy/group | ✅ upstream | propio | upstream |
 | **`ansible`** | hosted + proxy + group | ✅ nuevo + E2E | `nexus-repository-ansible` | 31 |
 | **`alpine`** | hosted + proxy + group | ✅ nuevo + E2E | `nexus-repository-alpine` | 9 |
-| `nuget` | hosted + proxy + group | 🚧 en curso | `nexus-repository-nuget` | — |
-| `cargo` | hosted + proxy + group | 🚧 en curso | `nexus-repository-cargo` | — |
-| `conan` | hosted + proxy + group | 🚧 en curso | `nexus-repository-conan` | — |
+| `nuget` | hosted + proxy + group | ✅ E2E | `nexus-repository-nuget` | 30 |
+| `cargo` | hosted + proxy + group | ✅ E2E | `nexus-repository-cargo` | 26 |
+| `conan` | hosted + proxy + group | ✅ hosted E2E (proxy: red) | `nexus-repository-conan` | 47 |
 | `cocoapods` | proxy | ⏳ pendiente | `nexus-repository-cocoapods` | — |
 | `p2` | proxy | ⏳ pendiente | `nexus-repository-p2` | — |
 | `swift` | hosted + proxy | ⏳ pendiente | `nexus-repository-swift` | — |
@@ -237,9 +239,100 @@ verde** (26 comprobaciones).
   no sea `application/x-www-form-urlencoded`): Jetty intenta parsear los formularios y rechaza
   cuerpos binarios grandes antes de llegar al handler.
 
-## 4. NuGet, 5. Cargo, 6. Conan, 7. CocoaPods, 8. p2, 9. Swift, 10. Git LFS
+## 4. NuGet
 
-_(se documentan en cuanto cada módulo queda verde y verificado E2E contra la assembly)_
+Recetas: `nuget-hosted`, `nuget-proxy`, `nuget-group` (v2 y v3).
+
+### Endpoints
+
+| Método | Ruta | Respuesta |
+|---|---|---|
+| GET | `/index.json` | índice de servicio v3 reescrito al repositorio local |
+| GET | `/v3/query?...` | búsqueda (se enruta al `SearchQueryService` descubierto) |
+| GET | `/v3-flatcontainer/{id}/index.json` | versiones del paquete |
+| GET | `/v3-flatcontainer/{id}/{version}/{id}.{version}.nupkg` | paquete `.nupkg` |
+| GET | `/registration5-semver1/…`, `/registration5-gz-semver2/…` | registration (se conserva la variante) |
+| PUT | `/api/v2/package` | publicación (hosted) |
+| DELETE | `/api/v2/package/{id}/{version}` | borrado (hosted) |
+
+### Descubrimiento de endpoints
+
+Al guardar `index.json` se extraen del upstream y se persisten como atributos del asset:
+
+- `PackageBaseAddress/3.0.0` → base del flat-container.
+- `RegistrationsBaseUrl/3.6.0` → base de registration.
+- `SearchQueryService` → endpoint de búsqueda (puede estar en otro host).
+
+Flat-container, registration y search usan esas bases, no el `remoteUrl`. Los atributos se
+recargan de forma perezosa tras un reinicio, por lo que no hace falta volver a pedir `index.json`
+para descargar paquetes. La variante de registration de la petición se conserva al construir la URL
+del upstream.
+
+### Verificación
+
+`index.json`, `v3-flatcontainer/newtonsoft.json/index.json`, `.nupkg` 13.0.3 (2.441.966 B, ZIP
+válido), `registration5-gz-semver2/...` y `v3/query` devuelven 200, también después de reiniciar.
+
+## 5. Cargo
+
+Recetas: `cargo-hosted`, `cargo-proxy`, `cargo-group`.
+
+### Endpoints
+
+| Método | Ruta | Respuesta |
+|---|---|---|
+| GET | `/index/config.json` | configuración del registro (`dl` y `api`) |
+| GET | `/index/{prefijo}/{nombre}` | índice NDJSON de una crate |
+| GET | `/api/v1/crates?...` | búsqueda |
+| GET | `/api/v1/crates/{crate}` | detalle de la crate |
+| GET | `/api/v1/crates/{crate}/{version}/download` | `.crate` (`application/gzip`) |
+| PUT | `/api/v1/crates/{crate}/{version}` y `.../upload` | publicación (hosted) |
+
+### Configuración publicada
+
+```json
+{"dl":"http://host:8081/repository/<repo>/api/v1/crates",
+ "api":"http://host:8081/repository/<repo>"}
+```
+
+`api` es la **raíz** del repositorio porque Cargo construye `<api>/api/v1/crates/...` a partir de
+ese valor. En el proxy, las descargas se enrutan contra el `dl` descubierto en el `config.json` del
+upstream (`https://static.crates.io/crates`) y las llamadas de API contra su `api`.
+
+### Verificación
+
+`config.json`, índice de `serde`, descargas de `serde/1.0.0` y `anyhow/1.0.0` con SHA-256 igual al
+`cksum`, y segunda petición servida desde caché.
+
+## 6. Conan
+
+Recetas: `conan-hosted`, `conan-proxy`, `conan-group` (dialectos v1 y v2).
+
+### Endpoints
+
+| Método | Ruta | Respuesta |
+|---|---|---|
+| GET | `/v1/ping`, `/v2/ping` | estado del servidor |
+| GET | `/v1/conans/search?q=...` | búsqueda |
+| PUT/GET | `/conans/{ref}/revisions/{rrev}/files/{file}` | ficheros de receta |
+| GET | `/conans/{ref}/revisions[/{rrev}]` | revisiones de receta |
+| PUT/GET | `…/packages/{pkg}/revisions/{prev}/files/{file}` | ficheros de paquete |
+| GET | `/v1/conans/{ref}[/packages/{pkg}]/download_urls` | URLs de descarga |
+
+### Almacenamiento
+
+`ConanCoordinates.assetPath()` genera rutas absolutas para el almacén; el handler usa rutas
+relativas coherentes para revisiones, ficheros y `download_urls`.
+
+### Verificación
+
+Hosted: receta, `conaninfo.txt` y `libhello.a` se guardan y recuperan byte a byte; revisiones,
+ficheros y `download_urls` de receta y paquete devuelven 200. El proxy no se pudo validar contra
+`center.conan.io` porque el upstream devuelve 403 desde esta red.
+
+## 7. CocoaPods, 8. p2, 9. Swift, 10. Git LFS
+
+_(sin receta registrada; pendientes de implementación)_
 
 ## 11. Cómo añadir otro formato
 

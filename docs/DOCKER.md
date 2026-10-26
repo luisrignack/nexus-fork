@@ -4,8 +4,8 @@
 > ejecutarlos (`export NEXUS_PASSWORD='...'`; el valor local está en
 > `nexus-public/admin-creds.txt`, ignorado por git) o sustitúyelo por tu usuario y contraseña.
 >
-> Estado: **funcional y verificado** (`ghcr` y `quay` de extremo a extremo; `dockerhub` y `gcr`
-> con limitación de red, ver §9).
+> Estado: **funcional y verificado** (`ghcr` y `quay` de extremo a extremo). Docker Hub y `gcr`
+> no están configurados: sus rutas devuelven 404 rápido sin intentar salida (ver §9).
 > Módulo: `nexus-public/public/common/components/formats/nexus-repository-docker/`
 > Licencia: EPL-1.0.
 
@@ -45,10 +45,11 @@ docker pull <host>:<puerto>/<nombre-repo>/<imagen>:<tag>
 ```
 
 El upstream del repositorio se toma de `dockerProxy.indexUrl` y, si está vacío, de
-`proxy.remoteUrl`. Con `indexType=HUB` se usa el mirror global `dockerhub`; con
-`indexType=REGISTRY` (por defecto) se usa la URL del proxy; con `CUSTOM` se usa la URL indicada.
-Las credenciales Basic/Bearer de `httpclient.authentication` se descifran con `SecretsService` y
-se envían al registro.
+`proxy.remoteUrl`. Con `indexType=HUB` se resuelve el mirror global `dockerhub`, que **no existe
+por defecto**: si no se configura explícitamente, las peticiones a ese repositorio devuelven 404
+con un aviso en el log en lugar de contactar Docker Hub. Con `indexType=REGISTRY` (por defecto) se
+usa la URL del proxy; con `CUSTOM` se usa la URL indicada. Las credenciales Basic/Bearer de
+`httpclient.authentication` se descifran con `SecretsService` y se envían al registro.
 
 ### Crear por REST
 
@@ -97,19 +98,25 @@ de mirrors que se describe a continuación.
 
 | Ruta en Nexus | Upstream | Registro real |
 |---|---|---|
-| `/v2/library/nginx/...` | `dockerhub` (por defecto) | Docker Hub |
-| `/v2/dockerhub/library/nginx/...` | `dockerhub` | Docker Hub |
-| `/v2/gcr/distroless/static/...` | `gcr` | Google Container Registry |
-| `/v2/ghcr/owner/image/...` | `ghcr` | GitHub Container Registry |
-| `/v2/quay/prometheus/node-exporter/...` | `quay` | Quay.io |
+| `/v2/ghcr/owner/image/...` | `ghcr` (por defecto) | GitHub Container Registry (mirror) |
+| `/v2/quay/prometheus/node-exporter/...` | `quay` | Quay.io (mirror) |
+| `/v2/library/nginx/...` | — | **404**: Docker Hub no está configurado |
+| `/v2/dockerhub/library/nginx/...` | — | **404**: Docker Hub no está configurado |
+| `/v2/gcr/distroless/static/...` | — | **404**: `gcr` no está configurado |
 
-- Si el primer segmento **no** coincide con ningún upstream configurado, se usa el upstream por
-  defecto y se reenvía la ruta completa. Así `docker pull localhost:8081/nginx` funciona como en
-  Docker Hub.
-- Si el primer segmento coincide pero no queda ruta después (`/v2/gcr`), también se trata como
-  ruta normal del upstream por defecto.
-- **Fallback `library/`**: en Docker Hub, una imagen sin `/` (`nginx`) se pide como `library/nginx`.
-  Se puede desactivar con `nexus.docker.hubLibraryFallback=false`.
+- Si el primer segmento coincide con un upstream configurado, se usa ese upstream y se reenvía el
+  resto de la ruta.
+- Si el primer segmento es un registro conocido pero **no** está configurado (`dockerhub`,
+  `docker`, `docker.io`, `index.docker.io`, `registry-1.docker.io`, `library`, `ghcr`, `quay`,
+  `gcr`), la petición se rechaza con **404**; no se envía al upstream por defecto para no
+  consultar el registro equivocado.
+- Si el primer segmento no es un nombre conocido (p. ej. `astral-sh/uv`), se usa el upstream por
+  defecto y se reenvía la ruta completa.
+- Si el primer segmento coincide pero no queda ruta después (`/v2/ghcr`), se trata como ruta
+  normal del upstream por defecto.
+- **Fallback `library/`**: solo se aplica a un upstream de Docker Hub configurado explícitamente;
+  añade `library/` a imágenes oficiales sin `/` (`nginx` → `library/nginx`). Se puede desactivar
+  con `nexus.docker.hubLibraryFallback=false`.
 
 ## 4. Configuración
 
@@ -123,8 +130,8 @@ Todas las propiedades se leen del entorno de Spring (`nexus.properties`, variabl
 | Propiedad | Por defecto | Descripción |
 |---|---|---|
 | `nexus.docker.enabled` | `true` | Si es `false`, `/v2/` responde 404. |
-| `nexus.docker.upstreams` | `dockerhub=https://docker.m.daocloud.io,gcr=https://gcr.m.daocloud.io,ghcr=https://ghcr.m.daocloud.io,quay=https://quay.m.daocloud.io` | Lista `nombre=url` separada por comas. |
-| `nexus.docker.defaultUpstream` | `dockerhub` | Upstream usado cuando la ruta no empieza por un nombre conocido. |
+| `nexus.docker.upstreams` | `ghcr=https://ghcr.m.daocloud.io,quay=https://quay.m.daocloud.io` | Lista `nombre=url` separada por comas. Solo mirrors verificados. |
+| `nexus.docker.defaultUpstream` | `ghcr` | Upstream usado cuando la ruta no empieza por un nombre conocido. |
 | `nexus.docker.cacheDir` | `${karaf.data}/docker-cache` | Directorio de caché. |
 | `nexus.docker.manifestTtlSeconds` | `300` | TTL de manifests pedidos **por tag**. Los pedidos por digest son inmutables. |
 | `nexus.docker.tagsTtlSeconds` | `300` | TTL de `/tags/list`. |
@@ -134,11 +141,15 @@ Todas las propiedades se leen del entorno de Spring (`nexus.properties`, variabl
 Ejemplo para cambiar de mirror sin recompilar:
 
 ```properties
-nexus.docker.upstreams=dockerhub=https://docker.m.daocloud.io,ghcr=https://ghcr.m.daocloud.io
-nexus.docker.defaultUpstream=dockerhub
+nexus.docker.upstreams=ghcr=https://ghcr.m.daocloud.io,quay=https://quay.m.daocloud.io
+nexus.docker.defaultUpstream=ghcr
 nexus.docker.manifestTtlSeconds=600
 nexus.docker.tagsTtlSeconds=600
 ```
+
+Para habilitar Docker Hub o `gcr` hace falta añadirlos explícitamente a `nexus.docker.upstreams`
+y reiniciar. No se añaden por defecto porque en este entorno Docker Hub está bloqueado y el mirror
+`gcr` rechaza los blobs.
 
 ### Credenciales de un upstream
 
@@ -243,6 +254,12 @@ curl -u admin:$NEXUS_PASSWORD 'http://localhost:8081/v2/quay/prometheus/node-exp
 docker pull localhost:8081/ghcr/stefanprodan/podinfo:6.0.0
 docker pull localhost:8081/quay/prometheus/node-exporter:v1.7.0
 
+# registros no configurados: 404 inmediato, sin salida a red
+curl -o /dev/null -w '%{http_code}\n' \
+  http://localhost:8081/v2/library/nginx/manifests/latest
+curl -o /dev/null -w '%{http_code}\n' \
+  http://localhost:8081/v2/gcr/distroless/static/manifests/nonroot
+
 # segunda descarga: debe ser inmediata (caché)
 curl -o /dev/null -w '%{time_total}\n' -u admin:$NEXUS_PASSWORD \
   http://localhost:8081/v2/quay/prometheus/node-exporter/blobs/<digest>
@@ -255,17 +272,19 @@ cd nexus-public
 mvn -o -pl public/common/components/formats/nexus-repository-docker test
 ```
 
-Cubren parseo de upstreams, resolución de prefijos, fallback `library/`, rutas de caché, TTL,
-sanitización de nombres, `Bearer` challenge, `Range`, digests, el facet de repositorio y
-garbage collection de la caché (31 tests).
+Cubren parseo de upstreams, resolución de prefijos, rechazo de registros no configurados, fallback
+`library/`, rutas de caché, TTL, sanitización de nombres, `Bearer` challenge, `Range`, digests, el
+facet de repositorio y garbage collection de la caché (32 tests).
 
 ## 9. Limitaciones conocidas
 
-1. **Daocloud + Docker Hub (blobs)**: los manifests se descargan bien, pero los blobs redirigen a
-   `production.cloudfront.docker.com`, que responde **403 por geobloqueo** desde esta red.
-   `docker pull` de imágenes de Docker Hub falla al bajar las capas.
-2. **Daocloud + GCR (blobs)**: igual, los blobs redirigen a Google Storage y devuelven **403** en
-   esta red. Los manifests de `gcr.m.daocloud.io` sí funcionan.
+1. **Docker Hub no está soportado por defecto**: `auth.docker.io` responde
+   `403 RBAC: access denied` y los blobs redirigen a `production.cloudfront.docker.com`, que
+   también responde 403 desde esta red. Por eso no se configura ningún upstream `dockerhub`: las
+   rutas de Docker Hub devuelven 404 rápido y no generan tráfico saliente.
+2. **`gcr` retirado de los defaults**: `gcr.m.daocloud.io` sirve manifiestos, pero los blobs
+   redirigen a Google Storage y devuelven 403. Un prefijo `gcr/...` sin upstream configurado
+   devuelve 404 en lugar de intentar la descarga.
 3. **GHCR y Quay**: funcionan completos (manifests, tags, blobs y `docker pull`) a través de
    `ghcr.m.daocloud.io` y `quay.m.daocloud.io`.
 4. **Sin push**: los mirrors son read-only y el módulo no implementa el flujo de upload.
@@ -273,8 +292,9 @@ garbage collection de la caché (31 tests).
    `docs/FUNCIONALIDADES_PRO.md`).
 6. **RBAC por repositorio/upstream**: no implementado en el servlet `/v2` (ver §5).
 
-Para Docker Hub/GCR en una red sin geobloqueo, o con otro mirror, basta cambiar
-`nexus.docker.upstreams`. El código no está atado a Daocloud.
+Para usar Docker Hub o GCR en una red sin bloqueo, añádelos explícitamente a
+`nexus.docker.upstreams` y ajusta `nexus.docker.defaultUpstream`. El código no está atado a
+Daocloud ni a los mirrors actuales.
 
 ## 10. Clases principales
 
