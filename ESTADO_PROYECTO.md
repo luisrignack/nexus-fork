@@ -793,3 +793,104 @@ Galaxy v2 200; group con URLs reescritas y descarga OK; proxy con URLs reescrita
 - **Pendiente:** repetir el proxy contra un Galaxy real accesible (`galaxy.ansible.com` devuelve
   403 desde este entorno) y verificar la UI (ExtJS/React) contra la assembly ya desplegada.
 
+## 2026-10-26 - Ansible: compatibilidad con `ansible-galaxy` 2.21 y Galaxy real
+
+**Síntoma:** con un proxy apuntando a `https://galaxy.ansible.com`, `ansible-galaxy` 2.21.5 fallaba
+en el descubrimiento (`/` redirigía a `api/v3/` y el cliente tomaba ese JSON como raíz de API, sin
+`available_versions`), resolvía `links.next` root-relative contra `http://localhost:8081/api/…`
+(404) y descargaba el tarball corrupto (5.331.538 bytes en vez de 2.913.455, gzip inválido).
+
+**Cambios (módulo `nexus-repository-ansible`):**
+
+1. **`AnsibleCoordinatesHelper`**: `isDocument()` pasa de lista negra a **lista blanca** de documentos
+   Galaxy (`ROOT`, `API_DISCOVERY`, `INDEX_*`); `DOWNLOAD`, `ASSET` y `UNKNOWN` conservan sus bytes.
+   Se reconocen los alias v3 (`/api/v3/collections/…`), el artefacto público
+   `/api/v3/plugin/ansible/content/published/collections/artifacts/*.tar.gz` y `/api/` como
+   `API_DISCOVERY`.
+2. **`AnsibleIndexBuilder`**: `root()` emite `available_versions` como objeto (`{"v3":"v3/"}`) y
+   nuevo `apiDiscovery()` (`v3`, `v1`) servido en `/api/`.
+3. **`AnsibleRootHandler`** (nuevo): `GET /` responde **200 `text/html`** en hosted/proxy/group. Se
+   elimina `AnsibleRedirectHandler`; el 302 rompía el sondeo de `ansible-galaxy`.
+4. **`AnsibleProxyFacet`**: reescribe también rutas root-relative (`"/api/…"`, incluidas las
+   escapadas `\/api\/…`), reenvía `limit`/`offset` y evita la caché por ruta en peticiones con query
+   (cada página es un documento distinto). Los paths desconocidos y los tarballs no se decodifican
+   como texto.
+5. **`AnsibleContentHandler`**: `API_DISCOVERY` para hosted; `DOWNLOAD` sin coordenadas (path público
+   de Galaxy) devuelve 404 en lugar de intentar servirlo del blob store. `AnsibleGroupHandler`
+   sirve `/api/` localmente.
+
+**Verificación:**
+
+- `mvn -o -B -pl public/common/components/formats/nexus-repository-ansible test` → **31 tests, 0
+  fallos** (`AnsibleCoordinatesHelperTest` 12, `AnsibleIndexBuilderTest` 10, `AnsibleProxyFacetTest`
+  4 nuevos).
+- Build completo de la assembly (~2:35) y Nexus reiniciado; recetas `group/hosted/proxy` presentes.
+- `GET /` → 200 `text/html`; `GET /api/` → 200 con `available_versions`.
+- **Galaxy real:** la IP del entorno está bloqueada por Cloudflare (403 incluso con `curl` directo,
+  `check-host.net` confirma 200 desde Polonia/Singapur). Se usó un relay local
+  (`/tmp/opencode/galaxy_relay.py`) que obtiene respuestas en vivo de Galaxy a través de un proxy
+  HTTP y solo cambia `https://galaxy.ansible.com` por el relay; los tarballs pasan byte a byte.
+  Con `remoteUrl=http://127.0.0.1:8098`:
+  - `/api/` 200; detalle de `community/general` 200 con URLs locales.
+  - `versions/?limit=100` 200 (`meta.count=243`, 100 filas); páginas 2 y 3 (100 + 43) con `next`
+    local y `null` al final.
+  - Detalle de `13.5.0` 200; `download_url` local; `sha256=54598287…`, `size=2913455`.
+  - Tarball por Nexus: 2.913.455 bytes, `gzip -t` OK, sha256 idéntico al publicado.
+  - `ansible-galaxy collection install community.general:13.5.0` → **OK**, incluida la dependencia
+    `community.library_inventory_filtering_v1:1.1.5`.
+- El relay y el upstream falso se detuvieron; `ansible-galaxy-real` quedó con
+  `remoteUrl=https://galaxy.ansible.com` y Nexus se reinició sin los argumentos de proxy usados
+  durante la prueba.
+
+**Pendiente:** repetir la instalación sin relay cuando la IP del entorno no esté bloqueada por
+Cloudflare; verificar la UI ExtJS/React del formato contra la assembly.
+
+## 2026-10-26 - Alpine (`apk`): formato nuevo hosted/proxy/group, build y E2E en verde
+
+**Módulo nuevo:** `nexus-public/public/common/components/formats/nexus-repository-alpine`
+(creado a partir del scaffold de Ansible y reescrito para APK). Registrado en
+`formats/pom.xml`, `components/pom.xml` (dependencyManagement), la assembly
+`nexus-repository-core` y `DatastoreHighAvailabilitySupportChecker`. UI: formularios
+`AlpineHosted.js`, `AlpineProxy.js`, `AlpineGroup.js`, registro en `Repositories.js` y estrategia
+`alpine` en `RepositoryUrls.js`.
+
+**Formato implementado (APK v2):**
+
+- Layout libre `<branch>/<repo>/<arch>/<archivo>`; el índice de un directorio se genera con los
+  `.apk` de ese mismo directorio (`v3.20/main/x86_64/APKINDEX.tar.gz`).
+- `AlpinePackageMetadata`: separador de miembros gzip propio (cabecera + inflate crudo +
+  trailer), parser de tar con PAX y lectura de `.PKGINFO`. **Solo infla el miembro de control**,
+  nunca la sección de datos.
+- `C:` = `Q1` + Base64(SHA1 de los bytes comprimidos del miembro de control). Verificado contra
+  `apk index` de `apk-tools` 2.14.4, 2.14.12 y 3.0.8: las estancias de `musl-1.2.5-r4.apk` y
+  `aaudit-0.7.2-r3.apk` salen **idénticas byte a byte**.
+- Hosted: `PUT`/`POST` valida el `.apk`, guarda la estancia en el atributo `alpine.indexEntry` y
+  regenera el índice en cada `GET` (nunca queda obsoleto); rechaza `PUT` sobre `APKINDEX.tar.gz`.
+- Proxy: passthrough puro con `Accept-Encoding: identity`, sin reescritura (el índice no contiene
+  URLs autorreferentes) y cachés separadas para índice y paquete.
+- Group: fusiona índices por `P:`+`V:` (gana el primer miembro) y sirve cada `.apk` del primer
+  miembro que lo tenga.
+- El índice generado **no va firmado**; los paquetes conservan su firma. Solo APK v2 (APK v3/ADB
+  no soportado).
+
+**Verificación:**
+
+- `mvn -o -q -pl public/common/components/formats/nexus-repository-alpine test` → **9 tests, 0
+  fallos** (`AlpinePackageMetadataTest` 4, `AlpineIndexBuilderTest` 5).
+- Build completo del reactor (~2:34, excluyendo `nexus-repository-cocoapods` que sigue roto) y
+  Nexus reiniciado desde la assembly. El fat jar lleva
+  `BOOT-INF/lib/nexus-repository-alpine-3.89.0-09.jar` (66 KB) y las 3 recetas aparecen en
+  `/service/rest/internal/ui/repositories/recipes`.
+- **E2E** (`/tmp/opencode/e2e_alpine.sh`, 26 comprobaciones, **todo OK**): alta hosted, rechazos
+  `400`, índice hosted idéntico a `apk index`, `.apk` byte a byte, proxy de
+  `dl-cdn.alpinelinux.org` (índice y paquete byte a byte), group fusionado y deduplicado, `apk add
+  musl` desde hosted, `apk add busybox` desde group (busybox del proxy y musl del hosted),
+  `DELETE 204` y descarga posterior `404` con índice vacío válido.
+- Incidencia de la prueba (no del formato): `curl --data-binary` sin `Content-Type` envía
+  `application/x-www-form-urlencoded` y Jetty rechaza el cuerpo binario antes del handler; con
+  `Content-Type: application/octet-stream` el `PUT` responde `201`. Documentado en
+  `docs/FORMATOS.md` §3.
+
+**Pendiente:** APK v3/ADB e índice firmado con clave de repositorio; verificar los formularios
+ExtJS en navegador (la REST API y las recetas ya están registradas).
+

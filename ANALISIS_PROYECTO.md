@@ -56,7 +56,8 @@ Ubicación en el árbol: `nexus-public/public/common/components/formats/`
 | **Helm** | `nexus-repository-helm` | `hosted`, `proxy`, `group` | **Completo y validado E2E** (chart propio + índice Bitnami vía proxy, merge de grupos; `docs/VALIDACION_HELM_GO_RUBYGEMS.md`) |
 | **Go** | `nexus-repository-go` | `hosted`, `proxy`, `group` | **Completo y validado E2E** (`.mod`/`.info`/`.zip` contra `proxy.golang.org`) |
 | **RubyGems** | `nexus-repository-rubygems` | `hosted`, `proxy`, `group` | **Completo y validado E2E** (`.gem` propios y descarga de `rubygems.org`) |
-| **Ansible (Galaxy)** | `nexus-repository-ansible` | `hosted`, `proxy`, `group` | **Completo y validado E2E** (API Galaxy v3 + compat. v2, publicación por `PUT`, índice/descripción/versiones, group con reescritura de URLs, proxy con upstream falso local; 24 tests; `docs/FORMATOS.md` §2) |
+| **Ansible (Galaxy)** | `nexus-repository-ansible` | `hosted`, `proxy`, `group` | **Completo y validado E2E** (API Galaxy v3 + descubrimiento `/api/` + alias v3 + compat. v2, publicación por `PUT`, índice/descripción/versiones, group con reescritura de URLs, proxy con reescritura absoluta/root-relative y paginado; `ansible-galaxy` 2.21.5 instaló `community.general:13.5.0` + dependencia desde Galaxy real; 31 tests; `docs/FORMATOS.md` §2) |
+| **Alpine (apk)** | `nexus-repository-alpine` | `hosted`, `proxy`, `group` | **Completo y validado E2E** (APK v2: `.PKGINFO` + `C:` = SHA1 del miembro de control comprimido, índice `APKINDEX.tar.gz` generado al vuelo e idéntico a `apk index`, proxy passthrough byte a byte contra `dl-cdn.alpinelinux.org`, group fusionado por `P:`+`V:`; `apk add musl` desde hosted y `apk add busybox` desde group; 9 tests; `docs/FORMATOS.md` §3) |
 | **NuGet** | *(pendiente)* | — | Pendiente de implementación (ver `docs/FUNCIONALIDADES_PRO.md` §8.5) |
 
 ---
